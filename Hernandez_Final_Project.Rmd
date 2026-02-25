@@ -1,0 +1,728 @@
+---
+title: "STAT 643:Nonparametric Statistics - Final Project"
+author: "Capt Guadalupe Hernandez"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    keep_tex: true
+geometry: margin=1in
+fontsize: 10pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results='hold', echo=FALSE, warning = FALSE, message=FALSE}
+library(ggplot2)
+library(car)
+library(kableExtra)
+library(knitr)
+library(GGally)
+library(dplyr)
+library(gt)
+library(metR)
+library(tidyr)
+library(patchwork)
+library(leaps)
+library(olsrr)
+library(binom)
+library(EnvStats)
+library(BSDA)
+library(ANSM5)
+library(NSM3)
+library(PMCMRplus)
+library(exactRankTests)
+library(nortest)
+library(numbers)
+library(MASS)
+options(digits = 10)
+```
+
+## Load Data
+
+```{r, results='hold'}
+cloud = read.table("cloud-seeding.txt", 
+                   header = TRUE, 
+                   sep = "\t",
+                   col.names = c("unseeded", "seeded"))
+
+kable(cloud, booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), position = "center")
+```
+
+
+```{r, results='hold'}
+cloud_long = cloud %>%
+  pivot_longer(cols = c(unseeded, seeded),
+               names_to = "cloud_type",
+               values_to = "rain_volume")
+
+kable(cloud_long, booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position"), position = "center")
+```
+
+
+## Boxplot
+
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+box_plot = ggplot(cloud_long, aes(x = cloud_type, y = rain_volume)) +
+  geom_boxplot(width = 0.6, alpha = 0.6, fill = "steelblue", outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.6, color = "darkred", size = 1) +
+  labs(title = "Boxplot of Rainfall by Cloud Type",
+       x = "",
+       y = "Precipitation (acre-feet)") +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+box_plot
+
+# Save the plot as a PNG
+ggsave(filename = "figures/box_plot.png",
+  plot = box_plot,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+## Boxplot, Log Scale
+
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+box_plot_log = ggplot(cloud_long, aes(x = cloud_type, y = rain_volume)) +
+  geom_boxplot(width = 0.6, alpha = 0.6, fill = "steelblue", outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.6, color = "darkred", size = 1) +
+  scale_y_log10() +
+  labs(title = "Boxplot of Rainfall by Cloud Type (Log Scale)",
+       x = "",
+       y = "Precipitation (acre-feet, log scale)") +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+box_plot_log
+
+# Save the plot as a PNG
+ggsave(filename = "figures/box_plot_log.png",
+  plot = box_plot_log,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+## Density Plot
+
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+density_plot = ggplot(cloud_long, aes(x = rain_volume, fill = cloud_type)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "Density of Rainfall by Cloud Type",
+       x = "Precipitation (acre-feet)",
+       y = "Density",
+       fill = "Cloud Type") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+density_plot
+
+# Save the plot as a PNG
+ggsave(filename = "figures/density_plot.png",
+  plot = density_plot,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+## Density Plot, Log Scale
+
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+density_plot_log = ggplot(cloud_long, aes(x = rain_volume, fill = cloud_type)) +
+  geom_density(alpha = 0.3) +
+  scale_x_log10() +
+  labs(title = "Density of Rainfall by Cloud Type (Log Scale)",
+       x = "Precipitation (acre-feet, log scale)",
+       y = "Density",
+       fill = "Cloud Type") +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+density_plot_log
+
+# Save the plot as a PNG
+ggsave(filename = "figures/density_plot_log.png",
+  plot = density_plot_log,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+## Histogram, Seeded Data
+
+We now want to visualize the distribution of the data using a histogram. We will select the optimal bandwidth according to the cross validation estimator of risk. The CV risk provides an approximation to the Integrated Mean Squared Error (IMSE) for histograms and can be expressed as
+$$
+\begin{aligned}
+\hat{J}(h) = \frac{2}{h(n-1)} - \frac{n+1}{h(n-1)} \sum_{i=1}^{m}\hat{p}_j^2,
+\end{aligned}
+$$
+
+where $\hat{p}_j = \frac{Y_j}{n}$ is the proportion of data points in the $j$th bin, $Y_j$ is the count in that bin, $n$ is the sample size, $h$ is the bin width, and $m$ is the number of bins. 
+
+We compare four standard rules for determining the histogram bin width:
+
+1. Freedman and Diaconis (1981)
+$$
+\begin{aligned}
+h_{\text{FD}} = 2 \cdot IQR \cdot n^{-1/3},  \quad  m_{\text{FD}} = \frac{(x_{(n)} - x_{(1)})}{h_{\text{FD}}}.
+\end{aligned}
+$$
+
+2. Scott’s rule 
+$$
+\begin{aligned}
+h_{\text{Scott}} = \frac{3.5 \hat{\sigma}}{n^{1/3}}, \quad m_{\text{Scott}} = \frac{(x_{(n)} - x_{(1)})}{h_{\text{Scott}}}.
+\end{aligned}
+$$
+
+3. Sturges’ rule 
+$$
+\begin{aligned}
+m_{\text{Sturges}} = \log_{2}n+1, \quad h_{\text{Sturges}} = \frac{(x_{(n)} - x_{(1)})}{m_{\text{Sturges}}}.
+\end{aligned}
+$$
+
+4. Normal Reference Rule
+$$
+\begin{aligned}
+h_{n} = \frac{1.06 \cdot \min \left\{ s, \frac{\text{IQR}}{1.34} \right\}}{n^{1/5}}, \quad m_{n} = \frac{(x_{(n)} - x_{(1)})}{h_{n}}.
+\end{aligned}
+$$
+
+Below we quickly list some summary statistics for our time $t$ dataset. 
+
+```{r, results='hold'}
+cloud_long %>%
+  group_by(cloud_type) %>%
+  summarise(n      = n(),
+            min    = min(rain_volume),
+            q25    = quantile(rain_volume, 0.25),
+            mean   = mean(rain_volume),
+            median = median(rain_volume),
+            q75    = quantile(rain_volume, 0.75),
+            max    = max(rain_volume),
+            sd     = sd(rain_volume),
+            IQR    = q75 - q25)  %>%
+  ungroup()
+```
+
+We compute the CV risk for each candidate bandwidth using the following function:
+```{r, results='hold'}
+cv_risk_hist = function(x, h) {
+  n = length(x)
+
+  # Define bins explicitly so they depend on h
+  breaks = seq(min(x), max(x) + h, by = h)
+
+  # Histogram counts
+  Y = hist(x, breaks = breaks, plot = FALSE)$counts
+
+  # Empirical bin probabilities
+  p_hat = Y / n
+
+  # CV risk
+  J_hat = (2 / (h * (n - 1))) - ((n + 1) / (h * (n - 1))) * sum(p_hat^2)
+
+  return(J_hat)
+}
+```
+
+Below you will find the code for the candidate bandwidths.
+```{r, results='hold'}
+n = length(cloud$seeded)
+
+h_fd = 2 * IQR(cloud$seeded) / n^(1/3)                # Freedman–Diaconis
+h_scott = 3.5 * sd(cloud$seeded) / n^(1/3)            # Scott
+h_sturges = diff(range(cloud$seeded)) / (log2(n) + 1) # Sturges
+h_n = 1.06 * min(sd(cloud$seeded), IQR(cloud$seeded)/1.34) / n^(1/5)  # normal reference
+
+h_candidates = c(FD = h_fd,
+                 Scott = h_scott,
+                 Sturges = h_sturges,
+                 NormalRef = h_n)
+```
+
+We can then print the results using:
+```{r, results='hold'}
+cv_results = data.frame(rule = names(h_candidates),
+                        h = h_candidates,
+                        cv_risk = sapply(X = h_candidates, FUN = cv_risk_hist, x = cloud$seeded))
+
+cv_results
+```
+
+```{r, results='hold'}
+cv_results[which.min(cv_results$cv_risk), ]
+```
+
+Based on the results, the Normal Reference rule produces the smallest CV risk. The optimal number of bins under the Normal Reference rule is
+$$
+\begin{aligned}
+m_{n} = \frac{(x_{(n)} - x_{(1)})}{h_{n}} = \frac{(2745.6 - 4.1)}{126.9451} = 21.5959 \approx 22.
+\end{aligned}
+$$
+
+```{r, results='hold'}
+m_n = ceiling( diff(range(cloud$seeded)) / h_n )
+m_n
+```
+
+
+The Normal Reference Rule formula gives a non-integer number of bins. Since a histogram requires an integer number of bins, we round up to the closest integer, 22.
+
+Using the number of bins, we construct the histogram for the seeded cloud data.
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+seeded_hist = ggplot(cloud, aes(x = seeded)) +
+  geom_histogram(bins = m_n,
+                 fill = "steelblue",
+                 color = "black",
+                 alpha = 0.6) +
+  labs(title = "Histogram of Rainfall from Seeded Clouds",
+       x = "Precipitation (acre-feet)",
+       y = "Count") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+seeded_hist
+
+# Save the plot as a PNG
+ggsave(filename = "figures/seeded_hist.png",
+  plot = seeded_hist,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+## Histogram, Unseeded Data
+
+We compute the CV risk for each candidate bandwidth using the following function:
+```{r, results='hold'}
+cv_risk_hist = function(x, h) {
+  n = length(x)
+
+  # Define bins explicitly so they depend on h
+  breaks = seq(min(x), max(x) + h, by = h)
+
+  # Histogram counts
+  Y = hist(x, breaks = breaks, plot = FALSE)$counts
+
+  # Empirical bin probabilities
+  p_hat = Y / n
+
+  # CV risk
+  J_hat = (2 / (h * (n - 1))) - ((n + 1) / (h * (n - 1))) * sum(p_hat^2)
+
+  return(J_hat)
+}
+```
+
+Below you will find the code for the candidate bandwidths.
+```{r, results='hold'}
+n = length(cloud$unseeded)
+
+h_fd = 2 * IQR(cloud$unseeded) / n^(1/3)                # Freedman–Diaconis
+h_scott = 3.5 * sd(cloud$unseeded) / n^(1/3)            # Scott
+h_sturges = diff(range(cloud$unseeded)) / (log2(n) + 1) # Sturges
+h_n = 1.06 * min(sd(cloud$unseeded), IQR(cloud$unseeded)/1.34) / n^(1/5)  # normal reference
+
+h_candidates = c(FD = h_fd,
+                 Scott = h_scott,
+                 Sturges = h_sturges,
+                 NormalRef = h_n)
+```
+
+We can then print the results using:
+```{r, results='hold'}
+cv_results = data.frame(rule = names(h_candidates),
+                        h = h_candidates,
+                        cv_risk = sapply(X = h_candidates, FUN = cv_risk_hist, x = cloud$unseeded))
+
+cv_results
+```
+
+```{r, results='hold'}
+cv_results[which.min(cv_results$cv_risk), ]
+```
+
+Based on the results, the Normal Reference rule produces the smallest CV risk. The optimal number of bins under the Normal Reference rule is
+$$
+\begin{aligned}
+m_{n} = \frac{(x_{(n)} - x_{(1)})}{h_{n}} = \frac{(1202.6 - 1.0)}{55.4019} = 21.6888 \approx 22.
+\end{aligned}
+$$
+
+```{r, results='hold'}
+m_n = ceiling( diff(range(cloud$unseeded)) / h_n )
+m_n
+```
+
+
+The Normal Reference Rule formula gives a non-integer number of bins. Since a histogram requires an integer number of bins, we round up to the closest integer, 22.
+
+Using the number of bins, we construct the histogram for the seeded cloud data.
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+unseeded_hist = ggplot(cloud, aes(x = unseeded)) +
+  geom_histogram(bins = m_n,
+                 fill = "steelblue",
+                 color = "black",
+                 alpha = 0.6) +
+  labs(title = "Histogram of Rainfall from Unseeded Clouds",
+       x = "Precipitation (acre-feet)",
+       y = "Count") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+unseeded_hist
+
+# Save the plot as a PNG
+ggsave(filename = "figures/unseeded_hist.png",
+  plot = unseeded_hist,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+## Combined Histogram
+
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+combined_hist = ggplot(cloud_long, aes(x = rain_volume, fill = cloud_type)) +
+  geom_histogram(bins = 22,
+                 color = "black",
+                 alpha = 0.6) +
+  scale_fill_manual(values = c("seeded" = "steelblue", "unseeded" = "darkred")) +
+  facet_wrap(~ cloud_type, scales = "free") +
+  labs(title = "Histogram of Rainfall by Cloud Type",
+       x = "Precipitation (acre-feet)",
+       y = "Count") +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+
+combined_hist
+
+# Save the plot as a PNG
+ggsave(filename = "figures/combined_hist.png",
+  plot = combined_hist,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+## QQ Plot
+
+Before conducting any formal tests, a normal QQ plot was generated to visually assess normality.
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+# Sort the data
+seeded = sort(cloud$seeded)
+unseeded = sort(cloud$unseeded)
+
+# Make a data frame
+qq_df = data.frame(seeded = seeded,
+                   unseeded = unseeded)
+
+qq_plot = ggplot(qq_df, aes(x = seeded, y = unseeded)) +
+  geom_point(color = "darkred", size = 1.5, alpha = 0.6) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "steelblue") +
+  labs(title = "Q-Q Plot: Seeded vs. Unseeded Rainfall",
+       x = "Seeded Quantiles",
+       y = "Unseeded Quantiles") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+qq_plot
+
+# Save the plot as a PNG
+ggsave(filename = "figures/qq_plot.png",
+  plot = qq_plot,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+
+## QQ Plot, Log Scale
+
+Before conducting any formal tests, a normal QQ plot was generated to visually assess normality.
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+# Sort the data
+seeded = sort(cloud$seeded)
+unseeded = sort(cloud$unseeded)
+
+# Make a data frame
+qq_df = data.frame(seeded = seeded,
+                   unseeded = unseeded)
+
+qq_plot_log = ggplot(qq_df, aes(x = seeded, y = unseeded)) +
+  geom_point(color = "darkred", size = 1.5, alpha = 0.6) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "steelblue") +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(title = "Q-Q Plot: Seeded vs. Unseeded Rainfall (Log Scale)",
+       x = "Seeded Quantiles (log scale)",
+       y = "Unseeded Quantiles (log scale)") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+qq_plot_log
+
+# Save the plot as a PNG
+ggsave(filename = "figures/qq_plot_log.png",
+  plot = qq_plot_log,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+# Gamma Fit
+
+```{r, results='hold'}
+fit_seeded = fitdistr(cloud$seeded, "gamma")
+fit_unseeded = fitdistr(cloud$unseeded, "gamma")
+
+cat("Gamma Parameters for Seeded Clouds\n")
+fit_seeded
+cat("Gamma Parameters for Unseeded Clouds\n")
+fit_unseeded
+```
+
+
+```{r, results='hold'}
+shape_s = fit_seeded$estimate["shape"]
+rate_s = fit_seeded$estimate["rate"]
+
+shape_u = fit_unseeded$estimate["shape"]
+rate_u = fit_unseeded$estimate["rate"]
+```
+
+
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+ggplot(cloud_long, aes(x = rain_volume, fill = cloud_type)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 22,
+                 fill = "gray80",
+                 color = "black",
+                 alpha = 0.6) +
+  stat_function(data = subset(cloud_long, cloud_type == "seeded"),
+                fun = dgamma,
+                args = list(shape = shape_s, rate = rate_s),
+                color = "steelblue",
+                linewidth = 0.5) +
+  stat_function(data = subset(cloud_long, cloud_type == "unseeded"),
+                fun = dgamma,
+                args = list(shape = shape_u, rate = rate_u),
+                color = "darkred",
+                linewidth = 0.5) +
+  facet_wrap(~ cloud_type, scales = "free") +
+  labs(title = "Gamma Distribution Fit to Rainfall Data",
+       x = "Precipitation (acre-feet)",
+       y = "Density") +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Conover Test of Equal Variance
+
+We begin with the Conover test, using a significance level of $\alpha = 0.05$. 
+
+Let $X$ denote the precipitation levels for seeded clouds and let $Y$ denote the precipitation levels for unseeded clouds. The assumptions underlying this hypothesis test are:
+
+- Observations $X_1, \dots, X_m$ are iid from population 1, and $Y_1, \dots, Y_n$ are iid from population 2,
+- The $X$'s and $Y$'s are mutually independent,
+- Populations 1 and 2 are continuous.
+
+Although the recorded rainfall measurements are discrete, we conceptualize the underlying process as a continuous latent variable, representing the continuous flow of precipitation. This justifies the continuity assumption. Additionally, ties may occur in the observed data due to discretization, and these are accommodated using tie-adjusted statistics and asymptotic approximations for the $p$-value calculation.
+
+Below we quickly check to see if there are any ties present. 
+```{r, results='hold'}
+# Define groups
+X = cloud$seeded
+Y = cloud$unseeded
+
+# Obtain sample sizes
+m = length(X)
+n = length(Y)
+N = m + n
+
+# Squared deviations from group means
+d_X = (X - mean(X))^2
+d_Y = (Y - mean(Y))^2
+
+# Combine squared deviations and rank
+d_all = c(d_X, d_Y)
+ranks = rank(d_all, ties.method = "average")
+
+# Check for ties in the ranked deviations
+has_ties = length(unique(ranks)) < length(ranks)
+
+has_ties
+```
+
+The null hypothesis asserts that the variability of the two populations is equal, and the alternative hypothesis asserts that the variances differ. Formally, we have
+$$
+\begin{aligned}
+H_0:& \quad \sigma_{X}^2 = \sigma_{Y}^2,\\
+H_A:& \quad \sigma_{X}^2 \neq \sigma_{Y}^2.
+\end{aligned}
+$$
+The Conover procedure involves computing the squared deviations of each observation from its sample mean for both groups. These $m+n$ squared differences are then ranked together, and the sum of the squared ranks for the observations from $Y$ is used to calculate the test statistic.
+
+```{r, results='hold'}
+# Split ranks by group
+R_X = ranks[1:m]  
+R_Y = ranks[(m+1):(m+n)]
+
+# Compute T = sum of squared ranks for RV Y
+T = sum(R_Y^2)
+
+if (!has_ties) {
+  # --- EXACT METHOD ---
+  cat("No ties detected. Using Exact Distribution for T\n")
+  cat("T:", T, "\n")
+  cat("Look up the appropriate percentile of the Conover test")
+} else {
+  # --- ASYMPTOTIC METHOD ---
+  cat("Ties detected. Using Tie-Adjusted Normal Approximation (T*)\n")
+  
+  # Tie-adjusted quantities
+  V_R = (sum(R_X^2) + sum(R_Y^2)) / N
+  W_R = sum(R_X^4) + sum(R_Y^4)
+  
+  # Standardized test statistic T*
+  numerator = T - m * V_R
+  denominator = sqrt((m*n/(N*(N-1))) * W_R - (m*n/(N-1)) * V_R^2)
+  T_star = numerator / denominator
+  
+  # Two-sided p-value
+  alpha = 0.05
+  crit_val = qnorm(1 - (alpha)/2)
+  
+  # Output results
+  cat("T:", T, "\n")
+  cat("V_R:", V_R, "\n")
+  cat("W_R:", W_R, "\n")
+  cat("Tie-adjusted statistic (T*):", T_star, "\n")
+  cat("Critical Value (z_aplha/2):", crit_val, "\n")
+}
+```
+For the Conover test, the tie-adjusted test statistic is $T^{*} = -3.9461$. The associated critical value for this test is $z_{\alpha/2} = 1.960$.
+
+The rejection region is defined as
+$$
+\begin{aligned}
+\lvert T^{*} \rvert \geq z_{\alpha/2}.
+\end{aligned}
+$$
+Since $\lvert T^{*} \rvert = 3.9461 > 1.960$, the test statistic falls in the rejection region. Therefore, we reject the null hypothesis.
+
+At the $\alpha = 0.05$ significance level, there is insufficient evidence to conclude that the variances of precipitation among the two types of clouds are different. In practical terms, the cloud precipitation exhibit similar dispersions across the groups.
+
+
+## Conover Test of Equal Variance, Log Scale
+
+To determine whether a location-shift test is appropriate, we first assess whether the variability of rainfall is similar between seeded and unseeded clouds. We use the Conover test on the log-transformed rainfall data, with a significance level of $\alpha = 0.05$.
+
+Let $X$ denote the log-transformed precipitation levels for seeded clouds and $Y$ denote the log-transformed precipitation levels for unseeded clouds. The assumptions underlying the Conover test are:
+
+- Observations $X_1, \dots, X_m$ are iid from population 1, and $Y_1, \dots, Y_n$ are iid from population 2,
+- The $X$'s and $Y$'s are mutually independent,
+- Populations 1 and 2 are continuous.
+
+Although the recorded rainfall measurements are discrete, we conceptualize the underlying process as a continuous latent variable, representing the continuous flow of precipitation. This justifies the continuity assumption. Additionally, ties may occur in the observed data due to discretization, and these are accommodated using tie-adjusted statistics and asymptotic approximations for the $p$-value calculation.
+
+Below we quickly check to see if there are any ties present. 
+```{r, results='hold'}
+# Define log-transformed groups
+X = log(cloud$seeded)
+Y = log(cloud$unseeded)
+
+# Obtain sample sizes
+m = length(X)
+n = length(Y)
+N = m + n
+
+# Squared deviations from group means (on log scale)
+d_X = (X - mean(X))^2
+d_Y = (Y - mean(Y))^2
+
+# Combine squared deviations and rank
+d_all = c(d_X, d_Y)
+ranks = rank(d_all, ties.method = "average")
+
+# Check for ties in the ranked deviations
+has_ties = length(unique(ranks)) < length(ranks)
+
+has_ties
+```
+
+The null hypothesis asserts that the variability of the two populations is equal, and the alternative hypothesis asserts that the variances differ. Formally, we have
+$$
+\begin{aligned}
+H_0:& \quad \log(\sigma_{X}^2) = \log(\sigma_{Y}^2),\\
+H_A:& \quad \log(\sigma_{X}^2) \neq \log(\sigma_{Y}^2).
+\end{aligned}
+$$
+The Conover procedure involves computing the squared deviations of each observation from its sample mean for both groups. These $m+n$ squared differences are then ranked together, and the sum of the squared ranks for the observations from $Y$ is used to calculate the test statistic.
+
+```{r, results='hold'}
+# Split ranks by group
+R_X = ranks[1:m]  
+R_Y = ranks[(m+1):(m+n)]
+
+# Compute T = sum of squared ranks for RV Y
+T = sum(R_Y^2)
+
+if (!has_ties) {
+  # --- EXACT METHOD ---
+  cat("No ties detected. Using Exact Distribution for T\n")
+  cat("T:", T, "\n")
+  cat("Look up the appropriate percentile of the Conover test")
+} else {
+  # --- ASYMPTOTIC METHOD ---
+  cat("Ties detected. Using Tie-Adjusted Normal Approximation (T*)\n")
+  
+  # Tie-adjusted quantities
+  V_R = (sum(R_X^2) + sum(R_Y^2)) / N
+  W_R = sum(R_X^4) + sum(R_Y^4)
+  
+  # Standardized test statistic T*
+  numerator = T - m * V_R
+  denominator = sqrt((m*n/(N*(N-1))) * W_R - (m*n/(N-1)) * V_R^2)
+  T_star = numerator / denominator
+  
+  # Two-sided p-value
+  alpha = 0.05
+  crit_val = qnorm(1 - (alpha)/2)
+  
+  # Output results
+  cat("T:", T, "\n")
+  cat("V_R:", V_R, "\n")
+  cat("W_R:", W_R, "\n")
+  cat("Tie-adjusted statistic (T*):", T_star, "\n")
+  cat("Critical Value (z_aplha/2):", crit_val, "\n")
+}
+```
+For the log-transformed rainfall, the tie-adjusted test statistic is $T^{*} = 0.4409$. The associated critical value for this test is $z_{\alpha/2} = 1.960$.
+
+The rejection region is defined as
+$$
+\begin{aligned}
+\lvert T^{*} \rvert \geq z_{\alpha/2}.
+\end{aligned}
+$$
+Since $\lvert T^{*} \rvert = 0.4409 < 1.960$, the test statistic doe not fall in the rejection region. Therefore, we fail to reject the null hypothesis of equal dispersions on the log-transformed data.
+
+At the $\alpha = 0.05$ significance level, there is insufficient evidence to reject the null hypothesis of equal dispersions. The log transformation successfully stabilized variances, justifying the use of a location-shift test (such as a Wilcoxon Rank Sum) to compare medians between seeded and unseeded clouds.
