@@ -487,6 +487,46 @@ ggsave(filename = "figures/qq_plot_log.png",
   dpi = 300)
 ```
 
+## QQ Plot, Combined
+
+Before conducting any formal tests, a normal QQ plot was generated to visually assess normality.
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+# 1. Log-transform the data
+log_seeded <- log(cloud$seeded)
+log_unseeded <- log(cloud$unseeded)
+
+# 2. Create the Seeded Normal Q-Q Plot
+p1 <- ggplot(data.frame(x = log_seeded), aes(sample = x)) +
+  stat_qq(color = "steelblue", alpha = 0.6) +
+  stat_qq_line(color = "black") +
+  labs(title = "Seeded Clouds",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles (Log)") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# 3. Create the Unseeded Normal Q-Q Plot
+p2 <- ggplot(data.frame(x = log_unseeded), aes(sample = x)) +
+  stat_qq(color = "darkred", alpha = 0.6) +
+  stat_qq_line(color = "black") +
+  labs(title = "Unseeded Clouds",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles (Log)") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# 4. Combine them side-by-side
+combined_qq <- p1 + p2
+combined_qq
+
+# 5. Save the combined plot
+ggsave(filename = "figures/qq_plots_combined.png", 
+       plot = combined_qq, 
+       width = 8, 
+       height = 4, 
+       dpi = 300)
+```
+
 # Gamma Fit
 
 ```{r, results='hold'}
