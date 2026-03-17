@@ -41,6 +41,8 @@ options(digits = 10)
 
 ## Load Data
 
+Below we load the cloud seeding dataset.
+
 ```{r, results='hold'}
 cloud = read.table("cloud-seeding.txt", 
                    header = TRUE, 
@@ -52,6 +54,8 @@ kable(cloud, booktabs = TRUE) %>%
 ```
 
 
+Pivot the dataset, so that all the measurements appear in 1 column as opposed to 2 columns. 
+
 ```{r, results='hold'}
 cloud_long = cloud %>%
   pivot_longer(cols = c(unseeded, seeded),
@@ -62,8 +66,44 @@ kable(cloud_long, booktabs = TRUE) %>%
   kable_styling(latex_options = c("striped", "hold_position"), position = "center")
 ```
 
+## Exploratory Data Analysis
+
+Below we quickly list some summary statistics for our time $t$ dataset. 
+
+```{r, results='hold'}
+cloud_long %>%
+  group_by(cloud_type) %>%
+  summarise(n      = n(),
+            min    = min(rain_volume),
+            q25    = quantile(rain_volume, 0.25),
+            mean   = mean(rain_volume),
+            median = median(rain_volume),
+            q75    = quantile(rain_volume, 0.75),
+            max    = max(rain_volume),
+            sd     = sd(rain_volume),
+            IQR    = q75 - q25)  %>%
+  ungroup()
+```
+
+and now on the log10 transfromted scale:
+```{r, results='hold'}
+cloud_long %>%
+  group_by(cloud_type) %>%
+  summarise(n      = n(),
+            min    = min(log10(rain_volume)),
+            q25    = quantile(log10(rain_volume), 0.25),
+            mean   = mean(log10(rain_volume)),
+            median = median(log10(rain_volume)),
+            q75    = quantile(log10(rain_volume), 0.75),
+            max    = max(log10(rain_volume)),
+            sd     = sd(log10(rain_volume)),
+            IQR    = q75 - q25)  %>%
+  ungroup()
+```
 
 ## Boxplot
+
+Below we generate a boxplot of the dataset.
 
 ```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
 box_plot = ggplot(cloud_long, aes(x = cloud_type, y = rain_volume)) +
@@ -86,8 +126,11 @@ ggsave(filename = "figures/box_plot.png",
   dpi = 300)
 ```
 
+Our dataset exhibits severe right-skew. 
+
 ## Boxplot, Log Scale
 
+Now we generate the boxplot for the data after it gets $\log_{10}$ transformed.
 ```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
 box_plot_log = ggplot(cloud_long, aes(x = cloud_type, y = rain_volume)) +
   geom_boxplot(width = 0.6, alpha = 0.6, fill = "steelblue", outlier.shape = NA) +
@@ -197,23 +240,6 @@ $$
 h_{n} = \frac{1.06 \cdot \min \left\{ s, \frac{\text{IQR}}{1.34} \right\}}{n^{1/5}}, \quad m_{n} = \frac{(x_{(n)} - x_{(1)})}{h_{n}}.
 \end{aligned}
 $$
-
-Below we quickly list some summary statistics for our time $t$ dataset. 
-
-```{r, results='hold'}
-cloud_long %>%
-  group_by(cloud_type) %>%
-  summarise(n      = n(),
-            min    = min(rain_volume),
-            q25    = quantile(rain_volume, 0.25),
-            mean   = mean(rain_volume),
-            median = median(rain_volume),
-            q75    = quantile(rain_volume, 0.75),
-            max    = max(rain_volume),
-            sd     = sd(rain_volume),
-            IQR    = q75 - q25)  %>%
-  ungroup()
-```
 
 We compute the CV risk for each candidate bandwidth using the following function:
 ```{r, results='hold'}
@@ -414,6 +440,34 @@ combined_hist
 # Save the plot as a PNG
 ggsave(filename = "figures/combined_hist.png",
   plot = combined_hist,
+  width = 5,
+  height = 3,     
+  units = "in",
+  dpi = 300)
+```
+
+## Combined Histogram Log Scale
+
+```{r, fig.width = 5, fig.height = 3, results='hold', warning=FALSE, message=FALSE}
+combined_hist_log = ggplot(cloud_long, aes(x = rain_volume, fill = cloud_type)) +
+  geom_histogram(bins = 22,
+                 color = "black",
+                 alpha = 0.6) +
+  scale_fill_manual(values = c("seeded" = "steelblue", "unseeded" = "darkred")) +
+  facet_wrap(~ cloud_type, scales = "free") +
+  scale_x_log10() +
+  labs(title = "Histogram of Rainfall by Cloud Type",
+       x = "Precipitation (acre-feet)",
+       y = "Count") +
+  theme_bw() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+
+combined_hist_log
+
+# Save the plot as a PNG
+ggsave(filename = "figures/combined_hist_log.png",
+  plot = combined_hist_log,
   width = 5,
   height = 3,     
   units = "in",
@@ -668,7 +722,7 @@ $$
 $$
 Since $\lvert T^{*} \rvert = 3.9461 > 1.960$, the test statistic falls in the rejection region. Therefore, we reject the null hypothesis.
 
-At the $\alpha = 0.05$ significance level, there is insufficient evidence to conclude that the variances of precipitation among the two types of clouds are different. In practical terms, the cloud precipitation exhibit similar dispersions across the groups.
+At the $\alpha = 0.05$ significance level, there is sufficient evidence to conclude that the variances of precipitation among the two types of clouds are different. In practical terms, the cloud precipitation do not exhibit similar dispersions across the groups.
 
 
 ## Conover Test of Equal Variance, Log Scale
@@ -686,8 +740,8 @@ Although the recorded rainfall measurements are discrete, we conceptualize the u
 Below we quickly check to see if there are any ties present. 
 ```{r, results='hold'}
 # Define log-transformed groups
-X = log(cloud$seeded)
-Y = log(cloud$unseeded)
+X = log10(cloud$seeded)
+Y = log10(cloud$unseeded)
 
 # Obtain sample sizes
 m = length(X)
@@ -711,8 +765,8 @@ has_ties
 The null hypothesis asserts that the variability of the two populations is equal, and the alternative hypothesis asserts that the variances differ. Formally, we have
 $$
 \begin{aligned}
-H_0:& \quad \log(\sigma_{X}^2) = \log(\sigma_{Y}^2),\\
-H_A:& \quad \log(\sigma_{X}^2) \neq \log(\sigma_{Y}^2).
+H_0:& \quad \sigma_{\log_{10}(X)}^2 = \sigma_{\log_{10}(Y)}^2,\\
+H_A:& \quad \sigma_{\log_{10}(X)}^2 \neq \sigma_{\log_{10}(Y)}^2.
 \end{aligned}
 $$
 The Conover procedure involves computing the squared deviations of each observation from its sample mean for both groups. These $m+n$ squared differences are then ranked together, and the sum of the squared ranks for the observations from $Y$ is used to calculate the test statistic.
@@ -752,7 +806,7 @@ if (!has_ties) {
   cat("V_R:", V_R, "\n")
   cat("W_R:", W_R, "\n")
   cat("Tie-adjusted statistic (T*):", T_star, "\n")
-  cat("Critical Value (z_aplha/2):", crit_val, "\n")
+  cat("Critical Value (z_alpha/2):", crit_val, "\n")
 }
 ```
 For the log-transformed rainfall, the tie-adjusted test statistic is $T^{*} = 0.4409$. The associated critical value for this test is $z_{\alpha/2} = 1.960$.
@@ -763,6 +817,113 @@ $$
 \lvert T^{*} \rvert \geq z_{\alpha/2}.
 \end{aligned}
 $$
-Since $\lvert T^{*} \rvert = 0.4409 < 1.960$, the test statistic doe not fall in the rejection region. Therefore, we fail to reject the null hypothesis of equal dispersions on the log-transformed data.
+Since $\lvert T^{*} \rvert = 0.4409 < 1.960$, the test statistic does not fall in the rejection region. Therefore, we fail to reject the null hypothesis of equal dispersions on the log-transformed data.
 
 At the $\alpha = 0.05$ significance level, there is insufficient evidence to reject the null hypothesis of equal dispersions. The log transformation successfully stabilized variances, justifying the use of a location-shift test (such as a Wilcoxon Rank Sum) to compare medians between seeded and unseeded clouds.
+
+## Wilcoxon Sum Rank Test
+
+After verifying that the log-transformed rainfall distributions have similar dispersion using the Conover test, we proceed with the Wilcoxon Rank Sum test to compare the central location of the two populations.
+
+Let $X$ denote the log-transformed precipitation measurements for seeded cloud and $Y$ denote the log-transformed precipitation measurements for unseeded clouds. To be consistent with the textbook notation, define
+$$
+\Delta = \theta_X - \theta_Y,
+$$
+
+where $\theta$ represents the location parameter (median).
+
+The assumptions underlying this hypothesis test are:
+
+- Observations $X_1, \dots, X_m$ are iid from population 1, and $Y_1, \dots, Y_n$ are iid from population 2,
+- The $X$'s and $Y$'s are mutually independent,
+- Populations 1 and 2 are continuous,
+- Under the null hypothesis, the two populations have the same distributional shape and spread. This assumption is supported by the Conover test, which found no evidence of unequal dispersion.
+
+We therefore conduct the following one-sided hypothesis test
+$$
+\begin{aligned}
+H_0:& \quad \Delta \leq 0,\\
+H_A:& \quad \Delta > 0.
+\end{aligned}
+$$
+This hypothesis test is performed below. 
+```{r, results='hold'}
+# Wilcoxon Rank Sum test
+# Documentation states that it uses x-y,
+wilcox.exact(x = log10(cloud$seeded),
+             y = log10(cloud$unseeded),
+             paired = FALSE,
+             alternative = "greater",
+             exact = TRUE,
+             conf.level = 0.95, 
+             conf.int = TRUE)
+```
+
+The function `wilcox.exact()` reports the Mann-Whitney $U$ statistic. To align with the Wilcoxon Rank Sum tables, we convert $U$ to the Wilcoxon statistic $W$ using
+$$
+\begin{aligned}
+W &= U + \frac{n(n+1)}{2} \\
+&= 473 + \frac{26 \cdot 27}{2} \\
+&= 824.
+\end{aligned}
+$$
+
+Because the sample sizes are moderately large ($m=n=26$), the distribution of the Wilcoxon statistic can be approximated using a normal distribution. The corresponding standardized statistic is
+$$
+\begin{aligned}
+W^{*} &= \frac{W - \frac{n(m+n+1)}{2}}{\sqrt{\frac{mn(m+n+1)}{12}}} \\
+&= \frac{824 - \frac{26(53)}{2}}{\sqrt{\frac{676(53)}{12}}} \\
+&= \frac{135}{\sqrt{\frac{8957}{3}}} \\
+&= 2.471.
+\end{aligned}
+$$
+
+
+For a one-sided test at significance level $\alpha = 0.05$, the critical value from the standard normal distribution is
+$$
+\begin{aligned}
+z_{0.05} = 1.6449.
+\end{aligned}
+$$
+
+```{r}
+qnorm(1 - 0.05)
+```
+
+
+The rejection region is given as 
+$$
+\begin{aligned}
+W^{*} \geq z_{0.05}.
+\end{aligned}
+$$
+
+Since $W^{*} = 2.471 > 1.6449$, we reject the null hypothesis. At the 5% significance level, there is sufficient statistical evidence to conclude that seeded clouds tend to produce larger precipitation amounts than unseeded clouds on the log scale.
+
+
+## Hodges-Lehmann estimator
+
+```{r}
+# Log-transformed rainfall for seeded and unseeded clouds
+log_seeded   <- log10(cloud$seeded)
+log_unseeded <- log10(cloud$unseeded)
+
+# Compute all pairwise differences: seeded - unseeded
+diffs <- outer(log_seeded, log_unseeded, "-")
+
+# Hodges-Lehmann estimator: median of all pairwise differences
+hl_manual <- median(diffs)
+hl_manual
+
+# Convert back to original units (multiplicative effect)
+k <- 10^hl_manual
+k
+```
+
+
+
+
+
+
+
+
